@@ -11,51 +11,32 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build and Push Docker Image
-        run: |
-          # 1. แปลงชื่อ Repo ทั้งหมด (owner/repo) ให้เป็น lowercase
-          # จาก JeyZDev/vue-app-prod -> jeyzdev/vue-app-prod
-          IMAGE_ID=$(echo "ghcr.io/${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
-          
-          # 2. ดึงชื่อ Tag จาก git ref (เช่น v1.0.0)
-          VERSION=${{ github.ref_name }}
+      - name: Build image and push to GitHub Packages (Docker Registry)
+        uses: mr-smithers-excellent/docker-build-push@v6
+        with:
+          image: ${{ github.event.repository.name }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-          # 3. Login เข้า GHCR
-          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-
-          # 4. Build และ Tag (ใช้ตัวแปรที่เป็น lowercase ทั้งหมด)
-          docker build -t $IMAGE_ID:$VERSION -t $IMAGE_ID:latest .
-
-          # 5. Push ขึ้น Registry
-          docker push $IMAGE_ID:$VERSION
-          docker push $IMAGE_ID:latest
 
   auto-deploy-docker-job:
     needs: release-docker-image-job
     runs-on: ubuntu-latest
+    env:
+      CONTAINER_NAME: 'wisarut-vue-app'
+      DOCKER_IMAGE_URL: 'ghcr.io/${{ github.actor }}/${{ github.event.repository.name }}:${{  github.ref_name }}'
     steps:
-      - name: Prepare Lowercase Image URL
-        id: prepare_vars
-        run: |
-          # ทำแบบเดียวกันเพื่อให้ได้ URL ที่ตรงกัน
-          REPO_LC=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
-          echo "IMAGE_URL=ghcr.io/${REPO_LC}:${{ github.ref_name }}" >> $GITHUB_ENV
-
-      - name: executing remote ssh commands
-        uses: appleboy/ssh-action@v1.0.0
-        env:
-          CONTAINER_NAME: 'wisarut-vue-app'
-        with:
-          host: '167.172.92.228'
-          username: 'root'
-          password: 'se@2026NPRU'
-          port: '22'
-          envs: CONTAINER_NAME, IMAGE_URL
-          script: |
-            # แปลง username เป็น lowercase สำหรับ login
-            LOWER_USER=$(echo "${{ github.actor }}" | tr '[:upper:]' '[:lower:]')
-            docker login -u $LOWER_USER -p ${{ secrets.GITHUB_TOKEN }} ghcr.io
-            
-            docker rm -f $CONTAINER_NAME || true
-            docker pull $IMAGE_URL
-            docker run --restart=always -d --name $CONTAINER_NAME -p 8088:80 $IMAGE_URL
+    - name: executing remote ssh commands using password
+      uses: appleboy/ssh-action@v1.0.0
+      with:
+        host: '167.172.92.228'  #production url: 159.223.41.181:9003
+        username: 'root'
+        password: 'se@2026NPRU'
+        port: '22'
+        script: |
+          docker logout ghcr.io
+          docker login -u ${{ github.actor }} -p ${{ secrets.GITHUB_TOKEN }}  ghcr.io/${{ github.actor }}/${{ github.event.repository.name }}
+          docker rm -f ${{ env.CONTAINER_NAME }} || true
+          docker pull ${{ env.DOCKER_IMAGE_URL }}
+          docker run --restart=always -d --name ${{ env.CONTAINER_NAME }} -p 8088:80 ${{ env.DOCKER_IMAGE_URL }}
