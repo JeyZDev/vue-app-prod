@@ -11,28 +11,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up lowercase repository name and tag
-        run: |
-          # แปลงชื่อ repository และ tag ให้เป็น lowercase
-          LOWER_REPO_NAME=$(echo "${{ github.event.repository.name }}" | tr "[:upper:]" "[:lower:]")
-          LOWER_TAG_NAME=$(echo "${{ github.ref_name }}" | tr "[:upper:]" "[:lower:]")
+      - name: Build image and push to GitHub Packages (Docker Registry)
+        uses: mr-smithers-excellent/docker-build-push@v6
+        with:
+          image: ${{ github.event.repository.name }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-          # สร้าง DOCKER_IMAGE_URL ที่เป็น lowercase
-          echo "DOCKER_IMAGE_URL=ghcr.io/${{ github.actor }}/${LOWER_REPO_NAME}:${LOWER_TAG_NAME}" >> $GITHUB_ENV
-          echo "LOWER_REPO_NAME=${LOWER_REPO_NAME}" >> $GITHUB_ENV
-          echo "LOWER_TAG_NAME=${LOWER_TAG_NAME}" >> $GITHUB_ENV
-
-      - name: Build Docker image and push to GitHub Packages (Docker Registry)
-        run: |
-          # Build และ push image โดยใช้ชื่อ repository และ tag ที่เป็น lowercase
-          docker build -t ${{ env.DOCKER_IMAGE_URL }} .
-          docker push ${{ env.DOCKER_IMAGE_URL }}
-        env:
-          DOCKER_IMAGE_URL: ${{ env.DOCKER_IMAGE_URL }}
 
   auto-deploy-docker-job:
     needs: release-docker-image-job
     runs-on: ubuntu-latest
+    env:
+      CONTAINER_NAME: 'wisarut-vue-app'
+      DOCKER_IMAGE_URL: 'ghcr.io/jeyzdev/${{ github.event.repository.name }}:${{  github.ref_name }}'
     steps:
     - name: executing remote ssh commands using password
       uses: appleboy/ssh-action@v1.0.0
@@ -42,13 +35,8 @@ jobs:
         password: 'se@2026NPRU'
         port: '22'
         script: |
-          # ทำการ logout ก่อน
           docker logout ghcr.io
-          # login กับ GitHub Container Registry ด้วยชื่อ repository ที่เป็น lowercase
-          docker login -u ${{ github.actor }} -p ${{ secrets.GITHUB_TOKEN }} ghcr.io/${{ github.actor }}/${{ env.LOWER_REPO_NAME }}
-          # ลบ container ถ้ามี
+          docker login -u ${{ github.actor }} -p ${{ secrets.GITHUB_TOKEN }}  ghcr.io/${{ github.actor }}/${{ github.event.repository.name }}
           docker rm -f ${{ env.CONTAINER_NAME }} || true
-          # Pull image ที่เป็น lowercase
           docker pull ${{ env.DOCKER_IMAGE_URL }}
-          # Run Docker container
           docker run --restart=always -d --name ${{ env.CONTAINER_NAME }} -p 8088:80 ${{ env.DOCKER_IMAGE_URL }}
