@@ -23,20 +23,28 @@ jobs:
   auto-deploy-docker-job:
     needs: release-docker-image-job
     runs-on: ubuntu-latest
-    env:
-      CONTAINER_NAME: 'wisarut-vue-app'
-      DOCKER_IMAGE_URL: 'ghcr.io/jeyzdev/${{ github.event.repository.name }}:${{  github.ref_name }}'
     steps:
-    - name: executing remote ssh commands using password
-      uses: appleboy/ssh-action@v1.0.0
-      with:
-        host: '167.172.92.228'  #production url: 159.223.41.181:9003
-        username: 'root'
-        password: 'se@2026NPRU'
-        port: '22'
-        script: |
-          docker logout ghcr.io
-          docker login -u ${{ github.actor }} -p ${{ secrets.GITHUB_TOKEN }}  ghcr.io/${{ github.actor }}/${{ github.event.repository.name }}
-          docker rm -f ${{ env.CONTAINER_NAME }} || true
-          docker pull ${{ env.DOCKER_IMAGE_URL }}
-          docker run --restart=always -d --name ${{ env.CONTAINER_NAME }} -p 8088:80 ${{ env.DOCKER_IMAGE_URL }}
+      # 1. สร้าง Step เพื่อแปลงชื่อ Repo เป็นตัวพิมพ์เล็กทั้งหมด
+      - name: Prepare Lowercase Image Name
+        id: prepare_vars
+        run: |
+          # ใช้คำสั่ง Bashแปลงค่าเป็น lowercase ทั้งหมด
+          REPO_NAME_LC=$(echo "${{ github.event.repository.name }}" | tr '[:upper:]' '[:lower:]')
+          echo "IMAGE_URL=ghcr.io/jeyzdev/${REPO_NAME_LC}:${{ github.ref_name }}" >> $GITHUB_ENV
+
+      # 2. นำ ${{ env.IMAGE_URL }} ไปใช้ใน Step ถัดไป
+      - name: executing remote ssh commands
+        uses: appleboy/ssh-action@v1.0.0
+        env:
+          CONTAINER_NAME: 'wisarut-vue-app'
+        with:
+          host: '167.172.92.228'
+          username: 'root'
+          password: 'se@2026NPRU'
+          port: '22'
+          envs: CONTAINER_NAME, IMAGE_URL # ส่งตัวแปร IMAGE_URL เข้าไปใน SSH
+          script: |
+            docker login -u jeyzdev -p ${{ secrets.GITHUB_TOKEN }} ghcr.io
+            docker rm -f $CONTAINER_NAME || true
+            docker pull $IMAGE_URL
+            docker run --restart=always -d --name $CONTAINER_NAME -p 8088:80 $IMAGE_URL
