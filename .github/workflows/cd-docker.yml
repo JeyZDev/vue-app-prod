@@ -19,12 +19,12 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-
   auto-deploy-docker-job:
     needs: release-docker-image-job
     runs-on: ubuntu-latest
     env:
       CONTAINER_NAME: 'jeyz9-vue-app'
+      # แปลงชื่อ repository และ tag ให้เป็น lowercase
       DOCKER_IMAGE_URL: 'ghcr.io/${{ github.actor }}/$(echo "${{ github.event.repository.name }}" | tr "[:upper:]" "[:lower:]"):${{ github.ref_name | tr "[:upper:]" "[:lower:]" }}'
     steps:
     - name: executing remote ssh commands using password
@@ -35,8 +35,13 @@ jobs:
         password: 'se@2026NPRU'
         port: '22'
         script: |
+          # ทำการ logout ก่อน
           docker logout ghcr.io
-          docker login -u ${{ github.actor }} -p ${{ secrets.GITHUB_TOKEN }}  ghcr.io/${{ github.actor }}/$(echo "${{ github.event.repository.name }}" | tr "[:upper:]" "[:lower:]")
+          # login กับ GitHub Container Registry ด้วยชื่อ repository ที่เป็น lowercase
+          docker login -u ${{ github.actor }} -p ${{ secrets.GITHUB_TOKEN }} ghcr.io/${{ github.actor }}/$(echo "${{ github.event.repository.name }}" | tr "[:upper:]" "[:lower:]")
+          # ลบ container ถ้ามี
           docker rm -f ${{ env.CONTAINER_NAME }} || true
+          # Pull image ที่เป็น lowercase
           docker pull ${{ env.DOCKER_IMAGE_URL }}
+          # Run Docker container
           docker run --restart=always -d --name ${{ env.CONTAINER_NAME }} -p 8088:80 ${{ env.DOCKER_IMAGE_URL }}
