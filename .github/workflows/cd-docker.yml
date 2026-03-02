@@ -6,62 +6,49 @@ on:
       - '*'
 
 jobs:
-  # 1. Job ใหม่เพื่อเตรียมชื่อ Image ที่เป็นตัวพิมพ์เล็ก
-  prepare:
-    runs-on: ubuntu-latest
-    outputs:
-      image_name: ${{ steps.set-vars.outputs.image_name }}
-    steps:
-      - id: set-vars
-        run: |
-          # แปลงชื่อเจ้าของและชื่อ repo เป็นตัวพิมพ์เล็ก
-          IMAGE_PATH="${GITHUB_REPOSITORY,,}"
-          echo "image_name=$IMAGE_PATH" >> $GITHUB_OUTPUT
-
   release-docker-image-job:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      # 1. เพิ่ม Step นี้เพื่อแปลงชื่อเป็นตัวพิมพ์เล็ก
-      - name: Set lower case owner name
+      - name: Set up lowercase repository name and tag
         run: |
-          echo "IMAGE_NAME=${GITHUB_REPOSITORY,,}" >> $GITHUB_ENV
+          # แปลงชื่อ repository และ tag ให้เป็น lowercase
+          LOWER_REPO_NAME=$(echo "${{ github.event.repository.name }}" | tr "[:upper:]" "[:lower:]")
+          LOWER_TAG_NAME=$(echo "${{ github.ref_name }}" | tr "[:upper:]" "[:lower:]")
 
-      - name: Build image and push to GitHub Packages
-        uses: mr-smithers-excellent/docker-build-push@v6
-        with:
-          # 2. เปลี่ยนมาใช้ตัวแปรที่เตรียมไว้
-          image: ${{ env.IMAGE_NAME }}
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-          tags: latest,${{ github.ref_name }}
+          # สร้าง DOCKER_IMAGE_URL ที่เป็น lowercase
+          echo "DOCKER_IMAGE_URL=ghcr.io/${{ github.actor }}/${LOWER_REPO_NAME}:${LOWER_TAG_NAME}" >> $GITHUB_ENV
+          echo "LOWER_REPO_NAME=${LOWER_REPO_NAME}" >> $GITHUB_ENV
+          echo "LOWER_TAG_NAME=${LOWER_TAG_NAME}" >> $GITHUB_ENV
+
+      - name: Build Docker image and push to GitHub Packages (Docker Registry)
+        run: |
+          # Build และ push image โดยใช้ชื่อ repository และ tag ที่เป็น lowercase
+          docker build -t ${{ env.DOCKER_IMAGE_URL }} .
+          docker push ${{ env.DOCKER_IMAGE_URL }}
+        env:
+          DOCKER_IMAGE_URL: ${{ env.DOCKER_IMAGE_URL }}
 
   auto-deploy-docker-job:
     needs: release-docker-image-job
     runs-on: ubuntu-latest
     steps:
-    - name: Set lower case owner name
-      run: |
-        echo "IMAGE_NAME_LOW=${GITHUB_REPOSITORY,,}" >> $GITHUB_ENV
-
-    - name: executing remote ssh commands
+    - name: executing remote ssh commands using password
       uses: appleboy/ssh-action@v1.0.0
-      env:
-        CONTAINER_NAME: 'wisarut-vue-app'
       with:
-        host: '167.172.92.228'
+        host: '167.172.92.228'  #production url: 159.223.41.181:9003
         username: 'root'
         password: 'se@2026NPRU'
         port: '22'
-        # ส่งค่า IMAGE_NAME_LOW เข้าไปใน script
-        envs: IMAGE_NAME_LOW, CONTAINER_NAME
         script: |
-          # ใช้ตัวแปรที่ส่งมาจาก envs
-          DOCKER_IMAGE_URL="ghcr.io/${IMAGE_NAME_LOW}:${{ github.ref_name }}"
-          
-          docker login -u ${{ github.actor }} -p ${{ secrets.GITHUB_TOKEN }} ghcr.io
-          docker rm -f $CONTAINER_NAME || true
-          docker pull $DOCKER_IMAGE_URL
-          docker run --restart=always -d --name $CONTAINER_NAME -p 8088:80 $DOCKER_IMAGE_URL
+          # ทำการ logout ก่อน
+          docker logout ghcr.io
+          # login กับ GitHub Container Registry ด้วยชื่อ repository ที่เป็น lowercase
+          docker login -u ${{ github.actor }} -p ${{ secrets.GITHUB_TOKEN }} ghcr.io/${{ github.actor }}/${{ env.LOWER_REPO_NAME }}
+          # ลบ container ถ้ามี
+          docker rm -f ${{ env.CONTAINER_NAME }} || true
+          # Pull image ที่เป็น lowercase
+          docker pull ${{ env.DOCKER_IMAGE_URL }}
+          # Run Docker container
+          docker run --restart=always -d --name ${{ env.CONTAINER_NAME }} -p 8088:80 ${{ env.DOCKER_IMAGE_URL }}
